@@ -137,6 +137,21 @@ static int elevator_run(void *data) {
     return 0;
 }
 
+void create_test_passenger(int start, int dest, int type) {
+    struct passenger *p = kmalloc(sizeof(struct passenger), GFP_KERNEL);
+    if (!p) return;
+
+    p->start_floor = start;
+    p->dest_floor = dest;
+    p->type = type;
+    p->weight = passenger_weights[type];
+
+    // Add to the floor list
+    list_add_tail(&p->list, &floors[start - 1].waiters);
+    floors[start - 1].count++;
+    elevator.total_waiting++;
+}
+
 /* --- 4. MODULE INITIALIZATION --- */
 static int __init elevator_init(void) {
     int i;
@@ -156,21 +171,26 @@ static int __init elevator_init(void) {
         floors[i].count = 0;
     }
 
-    //
-// Create a fake passenger for testing
-struct passenger *p = kmalloc(sizeof(struct passenger), GFP_KERNEL);
-p->type = BOSS;
-p->start_floor = 1;
-p->dest_floor = 5;
-p->weight = passenger_weights[BOSS];
 
-// Put the passenger on Floor 1
-mutex_lock(&elevator.lock);
-list_add_tail(&p->list, &floors[0].waiters);
-floors[0].count++;
-elevator.total_waiting++;
-mutex_unlock(&elevator.lock); 
-    ///
+    mutex_lock(&elevator.lock);
+
+    // Test Case: Complex Pickup/Dropoff
+    // 1. A Boss on Floor 1 going to Floor 3 (20 lbs)
+    create_test_passenger(1, 3, BOSS);
+
+    // 2. A Visitor on Floor 1 going to Floor 5 (5 lbs)
+    // Elevator should pick up both on Floor 1
+    create_test_passenger(1, 5, VISITOR);
+
+    // 3. A Lawyer on Floor 2 going to Floor 4 (15 lbs)
+    // Elevator should pick up while passing Floor 2
+    create_test_passenger(2, 4, LAWYER);
+
+    // 4. A Part-timer on Floor 4 going to Floor 1 (10 lbs)
+    // Elevator should ignore this until it finishes going UP
+    create_test_passenger(4, 1, PART_TIME);
+
+    mutex_unlock(&elevator.lock);
 
     elevator.thread = kthread_run(elevator_run, NULL, "elevator_thread");
     if (IS_ERR(elevator.thread)) {
