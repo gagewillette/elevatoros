@@ -14,10 +14,9 @@
 
 enum type { PART_TIME = 0, LAWYER = 1, BOSS = 2, VISITOR = 3 };
 enum state { OFFLINE = 0, IDLE = 1, LOADING = 2, UP = 3, DOWN = 4 };
-static char *state_names[] = {"OFFLINE", "IDLE", "LOADING", "UP", "DOWN"};
+static char *state_names[] = {"OFFLINE", "IDLE", "LOADING", "UP", "DOWN"}; // index with state enum
 
-int passenger_weights[] = {10, 15, 20, 5};
-char type_chars[] = {'P', 'L', 'B', 'V'};
+int passenger_weights[] = {10, 15, 20, 5}; // index with type enum 
 
 // each passenger has a starting floor, destination floor, type and weight 
 // To create a list of a given struct item,
@@ -50,6 +49,8 @@ struct floor_info {
     int count; // # of people standing on that floor 
 } floors[TOTAL_FLOORS];
 
+
+// the kernel thread that controls the elevator movement  
 static int elevator_run(void *data) {
     struct passenger *p, *tmp;
     int moved;
@@ -59,9 +60,10 @@ static int elevator_run(void *data) {
     while (!kthread_should_stop()) {
         moved = 0;
 
+	// start of critical section -- since we are going to be reading/modifying passenger lists
         mutex_lock(&elevator.lock);
 
-        // --- DEACTIVATION CHECK ---
+	// if stopping, wait until the elevator is empty 
         if (elevator.deactivating && elevator.passenger_count == 0) {
             elevator.current_state = OFFLINE;
             printk(KERN_INFO "Elevator empty and deactivating. Goodbye!\n");
@@ -69,27 +71,28 @@ static int elevator_run(void *data) {
             break;
         }
 
-        // --- UNLOADING LOGIC ---
+	// check if anyone inside needs to get off at this floor 
         list_for_each_entry_safe(p, tmp, &elevator.passengers, list) {
             if (p->dest_floor == elevator.current_floor) {
                 elevator.current_load -= p->weight;
                 elevator.passenger_count--;
                 elevator.total_serviced++;
-                list_del(&p->list);
-                kfree(p);
+                list_del(&p->list); // remove from list 
+                kfree(p);	// free memory allocated in issue_request 
                 moved = 1;
             }
         }
         if (moved) printk(KERN_INFO "Elevator unloaded passengers on floor %d\n", elevator.current_floor);
 
-        // --- LOADING LOGIC ---
+	// check if anyone on the floor can fit inside 
         if (!elevator.deactivating) {
             struct floor_info *f = &floors[elevator.current_floor - 1];
             list_for_each_entry_safe(p, tmp, &f->waiters, list) {
+		// check max weight and max passenger constraints 
                 if (elevator.passenger_count < MAX_PASSENGERS &&
                    (elevator.current_load + p->weight) <= MAX_WEIGHT) {
 
-                    list_move_tail(&p->list, &elevator.passengers);
+                    list_move_tail(&p->list, &elevator.passengers); // move from floor to elevator 
                     elevator.current_load += p->weight;
                     elevator.passenger_count++;
                     f->count--;
@@ -97,23 +100,25 @@ static int elevator_run(void *data) {
                     moved = 1;
                 } else {
                     break; // FIFO: if the first person can't fit, nobody behind them can
+			   // even if there is someone in line who can fit we don't want them cutting 
                 }
             }
         }
         if (moved) printk(KERN_INFO "Elevator loaded passengers on floor %d. Load: %d lbs\n", elevator.current_floor, elevator.current_load);
 
-        // --- MOVEMENT & DELAY LOGIC ---
         if (moved) {
             elevator.current_state = LOADING;
+	    // unlock before sleep since we never hold a mutex while the thread is sleeping 
             mutex_unlock(&elevator.lock);
-            ssleep(1); // Loading delay
+            ssleep(1); // required loading delay
         } else {
+		// if no work available, go to idle 
             if (elevator.passenger_count == 0 && elevator.total_waiting == 0) {
                 elevator.current_state = IDLE;
                 mutex_unlock(&elevator.lock);
                 ssleep(1); // Idle polling delay
             } else {
-                // Simple Scan Algorithm: Up to 5, Down to 1
+                // determine direction of elevator 
                 if (elevator.current_state == UP && elevator.current_floor == TOTAL_FLOORS)
                     elevator.current_state = DOWN;
                 else if (elevator.current_state == DOWN && elevator.current_floor == 1)
@@ -123,9 +128,10 @@ static int elevator_run(void *data) {
 
                 mutex_unlock(&elevator.lock);
 
-                ssleep(2); // Travel delay
+                ssleep(2); // required travel delay between floors 
 
                 mutex_lock(&elevator.lock);
+		// move the elevator 
                 if (elevator.current_state == UP) elevator.current_floor++;
                 else if (elevator.current_state == DOWN) elevator.current_floor--;
 
@@ -137,6 +143,7 @@ static int elevator_run(void *data) {
     return 0;
 }
 
+// helper function for hard-coded tests 
 void create_test_passenger(int start, int dest, int type) {
     struct passenger *p = kmalloc(sizeof(struct passenger), GFP_KERNEL);
     if (!p) return;
@@ -146,17 +153,17 @@ void create_test_passenger(int start, int dest, int type) {
     p->type = type;
     p->weight = passenger_weights[type];
 
-    // Add to the floor list
     list_add_tail(&p->list, &floors[start - 1].waiters);
     floors[start - 1].count++;
     elevator.total_waiting++;
 }
 
-/* --- 4. MODULE INITIALIZATION --- */
+// initializes data and spawns the kthread 
 static int __init elevator_init(void) {
     int i;
 
-    elevator.current_state = IDLE; // Set to IDLE for testing movement
+    // initialize global states 
+    elevator.current_state = IDLE; 
     elevator.current_floor = 1;
     elevator.current_load = 0;
     elevator.passenger_count = 0;
@@ -166,32 +173,22 @@ static int __init elevator_init(void) {
     INIT_LIST_HEAD(&elevator.passengers);
     mutex_init(&elevator.lock);
 
+    // initialize all floors 
     for (i = 0; i < TOTAL_FLOORS; i++) {
         INIT_LIST_HEAD(&floors[i].waiters);
         floors[i].count = 0;
     }
 
 
+    // load hard coded test passengers 
     mutex_lock(&elevator.lock);
-
-    // Test Case: Complex Pickup/Dropoff
-    // 1. A Boss on Floor 1 going to Floor 3 (20 lbs)
     create_test_passenger(1, 3, BOSS);
-
-    // 2. A Visitor on Floor 1 going to Floor 5 (5 lbs)
-    // Elevator should pick up both on Floor 1
     create_test_passenger(1, 5, VISITOR);
-
-    // 3. A Lawyer on Floor 2 going to Floor 4 (15 lbs)
-    // Elevator should pick up while passing Floor 2
     create_test_passenger(2, 4, LAWYER);
-
-    // 4. A Part-timer on Floor 4 going to Floor 1 (10 lbs)
-    // Elevator should ignore this until it finishes going UP
     create_test_passenger(4, 1, PART_TIME);
-
     mutex_unlock(&elevator.lock);
 
+    // spawn background thread 
     elevator.thread = kthread_run(elevator_run, NULL, "elevator_thread");
     if (IS_ERR(elevator.thread)) {
         return PTR_ERR(elevator.thread);
@@ -201,17 +198,21 @@ static int __init elevator_init(void) {
     return 0;
 }
 
+// clean up memory and stop the thread 
 static void __exit elevator_exit(void) {
     struct passenger *p, *tmp;
     int i;
 
+    // tell the thread to stop and wait for it to finish 
     if (elevator.thread) kthread_stop(elevator.thread);
 
     mutex_lock(&elevator.lock);
+    // free all passengers currently inside the elevator 
     list_for_each_entry_safe(p, tmp, &elevator.passengers, list) {
         list_del(&p->list);
         kfree(p);
     }
+    // free all passengers waiting on floors 
     for (i = 0; i < TOTAL_FLOORS; i++) {
         list_for_each_entry_safe(p, tmp, &floors[i].waiters, list) {
             list_del(&p->list);
@@ -219,7 +220,7 @@ static void __exit elevator_exit(void) {
         }
     }
     mutex_unlock(&elevator.lock);
-    mutex_destroy(&elevator.lock);
+    mutex_destroy(&elevator.lock); 
 
     printk(KERN_INFO "Elevator module unloaded.\n");
 }
