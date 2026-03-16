@@ -12,6 +12,11 @@
 #define MAX_PASSENGERS 5
 #define TOTAL_FLOORS 5
 
+// function prototypes
+static int start_elevator_impl(void);
+static int issue_request_impl(int start_floor, int dest_floor, int type);
+static int stop_elevator_impl(void);
+
 enum type { PART_TIME = 0, LAWYER = 1, BOSS = 2, VISITOR = 3 };
 enum state { OFFLINE = 0, IDLE = 1, LOADING = 2, UP = 3, DOWN = 4 };
 static char *state_names[] = {"OFFLINE", "IDLE", "LOADING", "UP", "DOWN"}; // index with state enum
@@ -179,20 +184,10 @@ static int __init elevator_init(void) {
         floors[i].count = 0;
     }
 
-
-    // load hard coded test passengers 
-    mutex_lock(&elevator.lock);
-    create_test_passenger(1, 3, BOSS);
-    create_test_passenger(1, 5, VISITOR);
-    create_test_passenger(2, 4, LAWYER);
-    create_test_passenger(4, 1, PART_TIME);
-    mutex_unlock(&elevator.lock);
-
-    // spawn background thread 
-    elevator.thread = kthread_run(elevator_run, NULL, "elevator_thread");
-    if (IS_ERR(elevator.thread)) {
-        return PTR_ERR(elevator.thread);
-    }
+  	
+    // init elevator state & thread vars
+    elevator.current_state = OFFLINE;
+    elevator.thread = NULL;
 
     printk(KERN_INFO "Elevator module loaded successfully.\n");
     return 0;
@@ -228,3 +223,4 @@ static void __exit elevator_exit(void) {
 MODULE_LICENSE("GPL");
 module_init(elevator_init);
 module_exit(elevator_exit);
+
