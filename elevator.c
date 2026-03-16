@@ -193,6 +193,52 @@ static int __init elevator_init(void) {
     return 0;
 }
 
+// initialize elevator state and launch the
+// kernel thread  for controlling elevator movement
+static int start_elevator_impl(void)
+{
+    int ret = 0;
+
+    mutex_lock(&elevator.lock);
+
+    // prevent starting the elevator if it is already active 
+    if (elevator.current_state != OFFLINE || elevator.thread != NULL) {
+        mutex_unlock(&elevator.lock);
+        return 1;
+    }
+
+    // Initialize elevator state 
+    elevator.current_state = IDLE;
+    elevator.current_floor = 1;
+    elevator.current_load = 0;
+    elevator.passenger_count = 0;
+    elevator.total_serviced = 0;
+    elevator.total_waiting = 0;
+    elevator.deactivating = 0;
+
+    INIT_LIST_HEAD(&elevator.passengers);
+
+    mutex_unlock(&elevator.lock);
+
+    // start elevator control thread 
+    elevator.thread = kthread_run(elevator_run, NULL, "elevator_thread");
+
+    if (IS_ERR(elevator.thread)) {
+        ret = PTR_ERR(elevator.thread);
+        elevator.thread = NULL;
+
+        mutex_lock(&elevator.lock);
+        elevator.current_state = OFFLINE;
+        mutex_unlock(&elevator.lock);
+
+        return ret;
+    }
+
+    return 0;
+}
+
+
+
 // clean up memory and stop the thread 
 static void __exit elevator_exit(void) {
     struct passenger *p, *tmp;
