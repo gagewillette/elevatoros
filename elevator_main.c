@@ -9,6 +9,11 @@
 #include <linux/slab.h>
 #include "elevator.h"
 
+// syscalls prototypes
+extern int (*STUB_start_elevator)(void);
+extern int (*STUB_issue_request)(int, int, int);
+extern int (*STUB_stop_elevator)(void);
+
 // function prototypes
 static int start_elevator_impl(void);
 static int issue_request_impl(int start_floor, int dest_floor, int type);
@@ -183,18 +188,14 @@ static int __init elevator_init(void) {
       mutex_destroy(&elevator.lock);
       return -ENOMEM;
     }
+  
+    // point the syscall prototypes to their local counterparts
+    // this actually links the syscalls for global calling
+    STUB_start_elevator = start_elevator_impl;
+    STUB_issue_request = issue_request_impl;
+    STUB_stop_elevator = stop_elevator_impl;
 
     printk(KERN_INFO "Elevator module loaded successfully.\n");
-
-    // this is test data that calls the respective syscalls locally.
-    // this is only meant to test the funcitonality and should remove on prod
-    // TODO: remove
-    start_elevator_impl();
-    issue_request_impl(1, 3, BOSS);
-    issue_request_impl(1, 5, VISITOR);
-    issue_request_impl(2, 4, LAWYER);
-    issue_request_impl(4, 1, PART_TIME);
-    // TODO: read the above and remove ts
 
     return 0;
 }
@@ -343,6 +344,12 @@ static void __exit elevator_exit(void) {
             kfree(p);
         }
     }
+    
+    // unlink the syscall pointers
+    STUB_start_elevator = NULL;
+    STUB_issue_request = NULL;
+    STUB_stop_elevator = NULL;
+
     mutex_unlock(&elevator.lock);
     mutex_destroy(&elevator.lock); 
 
