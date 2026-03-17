@@ -1,7 +1,7 @@
 /*
 !/README.md
 !/.gitignore
-!/elevator.c
+!/elevator_main.c
 !/Makefile
 !/elevator.h
 !/elevator_proc.c
