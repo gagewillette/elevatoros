@@ -275,7 +275,7 @@ static int issue_request_impl(int start_floor, int dest_floor, int type)
 
     mutex_lock(&elevator.lock);
 
-      // reject requests if elevator is offline or shutting down
+    // reject requests if elevator is offline or shutting down
     if (elevator.current_state == OFFLINE || elevator.deactivating) {
         mutex_unlock(&elevator.lock);
         kfree(p);
