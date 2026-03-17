@@ -3,4 +3,6 @@
 !/.gitignore
 !/elevator.c
 !/Makefile
+!/elevator.h
+!/elevator_proc.c
 

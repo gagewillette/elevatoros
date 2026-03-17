@@ -6,53 +6,20 @@
 #include <linux/delay.h>
 #include <linux/proc_fs.h>
 #include <linux/uaccess.h>
-#include <linux/slab.h> 
-
-#define MAX_WEIGHT 70
-#define MAX_PASSENGERS 5
-#define TOTAL_FLOORS 5
+#include <linux/slab.h>
+#include "elevator.h"
 
 // function prototypes
 static int start_elevator_impl(void);
 static int issue_request_impl(int start_floor, int dest_floor, int type);
 static int stop_elevator_impl(void);
 
-enum type { PART_TIME = 0, LAWYER = 1, BOSS = 2, VISITOR = 3 };
-enum state { OFFLINE = 0, IDLE = 1, LOADING = 2, UP = 3, DOWN = 4 };
-static char *state_names[] = {"OFFLINE", "IDLE", "LOADING", "UP", "DOWN"}; // index with state enum
+char *state_names[] = {"OFFLINE", "IDLE", "LOADING", "UP", "DOWN"};
 
-int passenger_weights[] = {10, 15, 20, 5}; // index with type enum 
+int passenger_weights[] = {10, 15, 20, 5};
 
-// each passenger has a starting floor, destination floor, type and weight 
-// To create a list of a given struct item,
-// Include list_head within the struct definition
-struct passenger {
-    int start_floor;
-    int dest_floor;
-    int type;
-    int weight;
-    struct list_head list;
-};
-
-struct elevator_info {
-    enum state current_state; // elevator is either offline, idle, loading, up, or down 
-    int current_floor;
-    int current_load; // total weight on elevator 
-    int passenger_count;
-    int total_serviced;
-    int total_waiting;	// # of passengers in ll
-    int deactivating; // Flag for stop_elevator
-    struct list_head passengers; // List of passengers inside
-    struct mutex lock; // lock is for handling shared data between floors and elevators 
-    struct task_struct *thread;  // kthread for controlling elevator movement  
-} elevator;
-
-
-// array floors of size 5 
-struct floor_info {
-    struct list_head waiters; // list of passengers waiting on that floor 
-    int count; // # of people standing on that floor 
-} floors[TOTAL_FLOORS];
+struct elevator_info elevator;
+struct floor_info floors[TOTAL_FLOORS];
 
 
 // the kernel thread that controls the elevator movement  
@@ -370,4 +337,3 @@ static void __exit elevator_exit(void) {
 MODULE_LICENSE("GPL");
 module_init(elevator_init);
 module_exit(elevator_exit);
-
