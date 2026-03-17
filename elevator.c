@@ -237,7 +237,74 @@ static int start_elevator_impl(void)
     return 0;
 }
 
+/*
+ * Handles a new passenger request.
+ *
+ * A passenger is dynamically allocated and added to the waiting
+ * queue of the specified floor. The elevator thread will later
+ * load the passenger when it reaches that floor.
+ */
+static int issue_request_impl(int start_floor, int dest_floor, int type)
+{
+    struct passenger *p;
 
+    // Validate request parameters 
+    if (start_floor < 1 || start_floor > TOTAL_FLOORS ||
+        dest_floor < 1 || dest_floor > TOTAL_FLOORS ||
+        start_floor == dest_floor ||
+        type < PART_TIME || type > VISITOR) {
+        return 1;
+    }
+
+    // Allocate passenger structure 
+    p = kmalloc(sizeof(struct passenger), GFP_KERNEL);
+    if (!p)
+        return -ENOMEM;
+
+    // Initialize passenger data
+    p->start_floor = start_floor;
+    p->dest_floor = dest_floor;
+    p->type = type;
+    p->weight = passenger_weights[type];
+
+    mutex_lock(&elevator.lock);
+
+    // Add passenger to the waiting list for the start floor
+    list_add_tail(&p->list, &floors[start_floor - 1].waiters);
+
+    floors[start_floor - 1].count++;
+    elevator.total_waiting++;
+
+    mutex_unlock(&elevator.lock);
+
+    return 0;
+}
+
+
+/*
+ * Signals the elevator system to stop accepting new work
+ * and begin shutdown.
+ *
+ * Elevator is set to deactivating state, it will continute
+ * executing untill all passengers are off and it can deactive
+ */
+static int stop_elevator_impl(void)
+{
+    mutex_lock(&elevator.lock);
+
+    // If already shutting down, ignore duplicate requests
+    if (elevator.deactivating) {
+        mutex_unlock(&elevator.lock);
+        return 1;
+    }
+
+    // Signal elevator thread to begin shutdown 
+    elevator.deactivating = 1;
+
+    mutex_unlock(&elevator.lock);
+
+    return 0;
+}
 
 // clean up memory and stop the thread 
 static void __exit elevator_exit(void) {
