@@ -57,24 +57,26 @@ struct floor_info {
 
 // the kernel thread that controls the elevator movement  
 static int elevator_run(void *data) {
-      struct passenger *p, *tmp;
+    struct passenger *p, *tmp;
 
     printk(KERN_INFO "Elevator thread starting...\n");
 
     while (!kthread_should_stop()) {
-        int moved = 0;
-        int loaded = 0;
-        int unloaded = 0;
+        int moved = 0; // any work done by elevator
+        int loaded = 0; // any loading done
+        int unloaded = 0; // any unloading done
 
         mutex_lock(&elevator.lock);
 
+        // if stopping & elevator is empty then shut down
         if (elevator.deactivating && elevator.passenger_count == 0) {
             elevator.current_state = OFFLINE;
             printk(KERN_INFO "Elevator empty and deactivating. Goodbye!\n");
             mutex_unlock(&elevator.lock);
             break;
         }
-
+        
+        // unload passengers whose destination is this floor
         list_for_each_entry_safe(p, tmp, &elevator.passengers, list) {
             if (p->dest_floor == elevator.current_floor) {
                 elevator.current_load -= p->weight;
@@ -86,36 +88,42 @@ static int elevator_run(void *data) {
                 moved = 1;
             }
         }
-
-        if (unloaded) {
-            printk(KERN_INFO "Elevator unloaded passengers on floor %d\n",
-                   elevator.current_floor);
-        }
-
+        
+        // print unloading events
+        if (unloaded) printk(KERN_INFO "Elevator unloaded passengers on floor %d\n", elevator.current_floor);
+        
+        // FIFO load passengers waiting on this floor
         if (!elevator.deactivating) {
             struct floor_info *f = &floors[elevator.current_floor - 1];
 
             list_for_each_entry_safe(p, tmp, &f->waiters, list) {
-                if (elevator.passenger_count < MAX_PASSENGERS &&
-                    (elevator.current_load + p->weight) <= MAX_WEIGHT) {
+
+                // check capacity & wait constraints
+                if (elevator.passenger_count < MAX_PASSENGERS && (elevator.current_load + p->weight) <= MAX_WEIGHT) {
+                    // move passenger from floor onto elevator
                     list_move_tail(&p->list, &elevator.passengers);
+
                     elevator.current_load += p->weight;
                     elevator.passenger_count++;
+
                     f->count--;
                     elevator.total_waiting--;
-                    loaded = 1;
+
+                    loaded = 1; // set flags
                     moved = 1;
                 } else {
                     break;
                 }
             }
         }
-
+        
+        // print loading events
         if (loaded) {
             printk(KERN_INFO "Elevator loaded passengers on floor %d. Load: %d lbs\n",
                    elevator.current_floor, elevator.current_load);
         }
 
+        // if work done, stay on floor briefly
         if (moved) {
             elevator.current_state = LOADING;
             mutex_unlock(&elevator.lock);
@@ -123,13 +131,15 @@ static int elevator_run(void *data) {
             continue;
         }
 
+        // if no passengers or waiting then set to IDLE
         if (elevator.passenger_count == 0 && elevator.total_waiting == 0) {
             elevator.current_state = IDLE;
             mutex_unlock(&elevator.lock);
             ssleep(1);
             continue;
         }
-
+  
+        // determine new direction
         if (elevator.current_state == UP && elevator.current_floor == TOTAL_FLOORS)
             elevator.current_state = DOWN;
         else if (elevator.current_state == DOWN && elevator.current_floor == 1)
@@ -138,12 +148,14 @@ static int elevator_run(void *data) {
             elevator.current_state =
                 (elevator.current_floor == TOTAL_FLOORS) ? DOWN : UP;
 
+
         mutex_unlock(&elevator.lock);
 
         ssleep(2);
 
         mutex_lock(&elevator.lock);
 
+        // move elevator one floor
         if (elevator.current_state == UP)
             elevator.current_floor++;
         else if (elevator.current_state == DOWN)
