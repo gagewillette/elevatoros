@@ -57,18 +57,17 @@ struct floor_info {
 
 // the kernel thread that controls the elevator movement  
 static int elevator_run(void *data) {
-    struct passenger *p, *tmp;
-    int moved;
+      struct passenger *p, *tmp;
 
     printk(KERN_INFO "Elevator thread starting...\n");
 
     while (!kthread_should_stop()) {
-        moved = 0;
+        int moved = 0;
+        int loaded = 0;
+        int unloaded = 0;
 
-	// start of critical section -- since we are going to be reading/modifying passenger lists
         mutex_lock(&elevator.lock);
 
-	// if stopping, wait until the elevator is empty 
         if (elevator.deactivating && elevator.passenger_count == 0) {
             elevator.current_state = OFFLINE;
             printk(KERN_INFO "Elevator empty and deactivating. Goodbye!\n");
@@ -76,75 +75,86 @@ static int elevator_run(void *data) {
             break;
         }
 
-	// check if anyone inside needs to get off at this floor 
         list_for_each_entry_safe(p, tmp, &elevator.passengers, list) {
             if (p->dest_floor == elevator.current_floor) {
                 elevator.current_load -= p->weight;
                 elevator.passenger_count--;
                 elevator.total_serviced++;
-                list_del(&p->list); // remove from list 
-                kfree(p);	// free memory allocated in issue_request 
+                list_del(&p->list);
+                kfree(p);
+                unloaded = 1;
                 moved = 1;
             }
         }
-        if (moved) printk(KERN_INFO "Elevator unloaded passengers on floor %d\n", elevator.current_floor);
 
-	// check if anyone on the floor can fit inside 
+        if (unloaded) {
+            printk(KERN_INFO "Elevator unloaded passengers on floor %d\n",
+                   elevator.current_floor);
+        }
+
         if (!elevator.deactivating) {
             struct floor_info *f = &floors[elevator.current_floor - 1];
-            list_for_each_entry_safe(p, tmp, &f->waiters, list) {
-		// check max weight and max passenger constraints 
-                if (elevator.passenger_count < MAX_PASSENGERS &&
-                   (elevator.current_load + p->weight) <= MAX_WEIGHT) {
 
-                    list_move_tail(&p->list, &elevator.passengers); // move from floor to elevator 
+            list_for_each_entry_safe(p, tmp, &f->waiters, list) {
+                if (elevator.passenger_count < MAX_PASSENGERS &&
+                    (elevator.current_load + p->weight) <= MAX_WEIGHT) {
+                    list_move_tail(&p->list, &elevator.passengers);
                     elevator.current_load += p->weight;
                     elevator.passenger_count++;
                     f->count--;
                     elevator.total_waiting--;
+                    loaded = 1;
                     moved = 1;
                 } else {
-                    break; // FIFO: if the first person can't fit, nobody behind them can
-			   // even if there is someone in line who can fit we don't want them cutting 
+                    break;
                 }
             }
         }
-        if (moved) printk(KERN_INFO "Elevator loaded passengers on floor %d. Load: %d lbs\n", elevator.current_floor, elevator.current_load);
+
+        if (loaded) {
+            printk(KERN_INFO "Elevator loaded passengers on floor %d. Load: %d lbs\n",
+                   elevator.current_floor, elevator.current_load);
+        }
 
         if (moved) {
             elevator.current_state = LOADING;
-	    // unlock before sleep since we never hold a mutex while the thread is sleeping 
             mutex_unlock(&elevator.lock);
-            ssleep(1); // required loading delay
-        } else {
-		// if no work available, go to idle 
-            if (elevator.passenger_count == 0 && elevator.total_waiting == 0) {
-                elevator.current_state = IDLE;
-                mutex_unlock(&elevator.lock);
-                ssleep(1); // Idle polling delay
-            } else {
-                // determine direction of elevator 
-                if (elevator.current_state == UP && elevator.current_floor == TOTAL_FLOORS)
-                    elevator.current_state = DOWN;
-                else if (elevator.current_state == DOWN && elevator.current_floor == 1)
-                    elevator.current_state = UP;
-                else if (elevator.current_state == IDLE || elevator.current_state == LOADING)
-                    elevator.current_state = (elevator.current_floor == TOTAL_FLOORS) ? DOWN : UP;
-
-                mutex_unlock(&elevator.lock);
-
-                ssleep(2); // required travel delay between floors 
-
-                mutex_lock(&elevator.lock);
-		// move the elevator 
-                if (elevator.current_state == UP) elevator.current_floor++;
-                else if (elevator.current_state == DOWN) elevator.current_floor--;
-
-                printk(KERN_INFO "Elevator moved to floor %d [%s]\n", elevator.current_floor, state_names[elevator.current_state]);
-                mutex_unlock(&elevator.lock);
-            }
+            ssleep(1);
+            continue;
         }
+
+        if (elevator.passenger_count == 0 && elevator.total_waiting == 0) {
+            elevator.current_state = IDLE;
+            mutex_unlock(&elevator.lock);
+            ssleep(1);
+            continue;
+        }
+
+        if (elevator.current_state == UP && elevator.current_floor == TOTAL_FLOORS)
+            elevator.current_state = DOWN;
+        else if (elevator.current_state == DOWN && elevator.current_floor == 1)
+            elevator.current_state = UP;
+        else if (elevator.current_state == IDLE || elevator.current_state == LOADING)
+            elevator.current_state =
+                (elevator.current_floor == TOTAL_FLOORS) ? DOWN : UP;
+
+        mutex_unlock(&elevator.lock);
+
+        ssleep(2);
+
+        mutex_lock(&elevator.lock);
+
+        if (elevator.current_state == UP)
+            elevator.current_floor++;
+        else if (elevator.current_state == DOWN)
+            elevator.current_floor--;
+
+        printk(KERN_INFO "Elevator moved to floor %d [%s]\n",
+               elevator.current_floor, state_names[elevator.current_state]);
+
+        mutex_unlock(&elevator.lock);
     }
+
     return 0;
 }
 
