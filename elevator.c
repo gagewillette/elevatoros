@@ -190,6 +190,18 @@ static int __init elevator_init(void) {
     elevator.thread = NULL;
 
     printk(KERN_INFO "Elevator module loaded successfully.\n");
+
+    // this is test data that calls the respective syscalls locally.
+    // this is only meant to test the funcitonality and should remove on prod
+    // TODO: remove
+    start_elevator_impl();
+    issue_request_impl(1, 3, BOSS);
+    issue_request_impl(1, 5, VISITOR);
+    issue_request_impl(2, 4, LAWYER);
+    issue_request_impl(4, 1, PART_TIME);
+    // TODO: read the above and remove ts
+
+
     return 0;
 }
 
