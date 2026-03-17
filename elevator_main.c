@@ -178,6 +178,12 @@ static int __init elevator_init(void) {
     elevator.current_state = OFFLINE;
     elevator.thread = NULL;
 
+    if (elevator_proc_init()) {
+      printk(KERN_ERR "Failed to initialize /proc/elevator\n");
+      mutex_destroy(&elevator.lock);
+      return -ENOMEM;
+    }
+
     printk(KERN_INFO "Elevator module loaded successfully.\n");
 
     // this is test data that calls the respective syscalls locally.
@@ -189,7 +195,6 @@ static int __init elevator_init(void) {
     issue_request_impl(2, 4, LAWYER);
     issue_request_impl(4, 1, PART_TIME);
     // TODO: read the above and remove ts
-
 
     return 0;
 }
@@ -311,6 +316,9 @@ static int stop_elevator_impl(void)
 static void __exit elevator_exit(void) {
     struct passenger *p, *tmp;
     int i;
+
+    // exit the proc output
+    elevator_proc_exit();
 
     // tell the thread to stop and wait for it to finish 
     if (elevator.thread) kthread_stop(elevator.thread);
