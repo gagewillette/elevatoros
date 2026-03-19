@@ -43,6 +43,7 @@ static int elevator_run(void *data) {
         // if stopping & elevator is empty then shut down
         if (elevator.deactivating && elevator.passenger_count == 0) {
             elevator.current_state = OFFLINE;
+            elevator.thread = NULL;
             printk(KERN_INFO "Elevator empty and deactivating. Goodbye!\n");
             mutex_unlock(&elevator.lock);
             break;
@@ -219,10 +220,9 @@ static int start_elevator_impl(void)
     elevator.current_floor = 1;
     elevator.current_load = 0;
     elevator.passenger_count = 0;
-    elevator.total_serviced = 0;
-    elevator.total_waiting = 0;
     elevator.deactivating = 0;
 
+    // Keep any queued floor requests that arrived while the elevator was offline.
     INIT_LIST_HEAD(&elevator.passengers);
 
     mutex_unlock(&elevator.lock);
@@ -275,13 +275,6 @@ static int issue_request_impl(int start_floor, int dest_floor, int type)
     p->weight = passenger_weights[type];
 
     mutex_lock(&elevator.lock);
-
-    // reject requests if elevator is offline or shutting down
-    if (elevator.current_state == OFFLINE || elevator.deactivating) {
-        mutex_unlock(&elevator.lock);
-        kfree(p);
-        return 1;
-    }
 
     // Add passenger to the waiting list for the start floor
     list_add_tail(&p->list, &floors[start_floor - 1].waiters);
